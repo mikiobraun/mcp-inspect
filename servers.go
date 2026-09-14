@@ -111,7 +111,7 @@ func namedAuthPath(name string) (string, error) {
 
 var unsafePathChars = regexp.MustCompile(`[^A-Za-z0-9.-]+`)
 
-// urlAuthPath is the auth cache for an ad-hoc URL target, e.g. auth/url/kb.miki.one_mcp.json.
+// urlAuthPath is the auth cache for an ad-hoc URL target, e.g. auth/url/kb.example.com_mcp.json.
 func urlAuthPath(serverURL string) (string, error) {
 	dir, err := configDir()
 	if err != nil {

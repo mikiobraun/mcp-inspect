@@ -38,7 +38,7 @@ Targets:
   mcp-inspect tools -- npx -y some-mcp-server arg     stdio
 
 Saved servers:
-  mcp-inspect add kb https://kb.miki.one [connection flags]
+  mcp-inspect add kb https://kb.example.com [connection flags]
   mcp-inspect add fs -- npx -y some-mcp-server arg
   The definition, including connection flags, is saved to
   mcp-inspect/servers/<name>.json in the user config directory (mode 0600).
