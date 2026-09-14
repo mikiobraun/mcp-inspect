@@ -1,0 +1,41 @@
+search (Search things)
+  Search for things.
+
+  Supports two modes.
+
+annotations:
+  idempotentHint: false, openWorldHint: false, readOnlyHint: true
+
+parameters:
+  query     string, required
+      what to look for
+      minLength: 1, maxLength: 200
+  mode      string
+      search strategy
+      default: "fast", one of: "fast" | "thorough"
+  limit     integer, nullable
+      default: 100, minimum: 1, maximum: 1000
+  filter    $ref #/$defs/Filter
+      optional filter
+  target    anyOf, required
+      URL or numeric id
+      anyOf: [{"type":"string","format":"uri"},{"type":"integer"}]
+  tags      array of string
+      uniqueItems: true, items one of: "a" | "b" | "c"
+  anything  any
+
+parameter definitions:
+  Filter  object
+      restricts results
+    path   string, required
+        folder prefix
+    since  string
+        format: "date-time"
+
+returns:
+  hits  array of $ref #/$defs/Hit
+
+result definitions:
+  Hit  object
+    path   string
+    score  number

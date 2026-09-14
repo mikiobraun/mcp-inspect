@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -254,12 +255,12 @@ func addCmd(flags *target) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return withSession(t, authPath, func(_ context.Context, session *mcp.ClientSession, _ *rawResults) error {
+			return withSession(cmd.OutOrStdout(), t, authPath, func(_ context.Context, w io.Writer, session *mcp.ClientSession, _ *rawResults) error {
 				if err := saveServer(path, t); err != nil {
 					return err
 				}
-				printServerHeader(session.InitializeResult())
-				fmt.Printf("saved server %q to %s\n", name, path)
+				printServerHeader(w, session.InitializeResult())
+				fmt.Fprintf(w, "saved server %q to %s\n", name, path)
 				return nil
 			})
 		},
@@ -281,11 +282,11 @@ func listCmd() *cobra.Command {
 				return err
 			}
 			if len(files) == 0 {
-				fmt.Println("no saved servers (see 'mcp-inspect add')")
+				fmt.Fprintln(cmd.OutOrStdout(), "no saved servers (see 'mcp-inspect add')")
 				return nil
 			}
 			slices.Sort(files)
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			for _, f := range files {
 				name := strings.TrimSuffix(filepath.Base(f), ".json")
 				t, err := loadServer(name)
@@ -351,13 +352,13 @@ func removeCmd() *cobra.Command {
 			} else if err != nil {
 				return err
 			}
-			fmt.Printf("removed %s\n", path)
+			fmt.Fprintf(cmd.OutOrStdout(), "removed %s\n", path)
 			authPath, err := namedAuthPath(name)
 			if err != nil {
 				return err
 			}
 			if err := os.Remove(authPath); err == nil {
-				fmt.Printf("removed %s\n", authPath)
+				fmt.Fprintf(cmd.OutOrStdout(), "removed %s\n", authPath)
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}

@@ -40,7 +40,7 @@ an error (isError: true; the result is still printed).`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			toolArgs, err := readToolArgs(argsFlag)
+			toolArgs, err := readToolArgs(argsFlag, cmd.InOrStdin())
 			if err != nil {
 				return err
 			}
@@ -52,7 +52,7 @@ an error (isError: true; the result is still printed).`,
 			if err != nil {
 				return err
 			}
-			return withSession(t, authPath, func(ctx context.Context, session *mcp.ClientSession, raw *rawResults) error {
+			return withSession(cmd.OutOrStdout(), t, authPath, func(ctx context.Context, w io.Writer, session *mcp.ClientSession, raw *rawResults) error {
 				params := &mcp.CallToolParams{Name: name, Arguments: toolArgs}
 				params.SetProgressToken("mcp-inspect")
 				res, err := session.CallTool(ctx, params)
@@ -68,7 +68,7 @@ an error (isError: true; the result is still printed).`,
 				if err := json.Indent(&buf, results[len(results)-1], "", "  "); err != nil {
 					return err
 				}
-				fmt.Println(buf.String())
+				fmt.Fprintln(w, buf.String())
 				if res.IsError {
 					return &exitError{code: 2, msg: "tool reported an error (isError: true)"}
 				}
@@ -81,14 +81,14 @@ an error (isError: true; the result is still printed).`,
 }
 
 // readToolArgs resolves --args into a JSON object.
-func readToolArgs(flag string) (json.RawMessage, error) {
+func readToolArgs(flag string, stdin io.Reader) (json.RawMessage, error) {
 	var data []byte
 	var err error
 	switch {
 	case flag == "":
 		return json.RawMessage("{}"), nil
 	case flag == "-":
-		data, err = io.ReadAll(os.Stdin)
+		data, err = io.ReadAll(stdin)
 	case strings.HasPrefix(flag, "@"):
 		data, err = os.ReadFile(flag[1:])
 	default:

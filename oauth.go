@@ -323,7 +323,9 @@ func browserFetcher(redirectURL string) auth.AuthorizationCodeFetcher {
 	}
 }
 
-func openBrowser(u string) {
+// openBrowser opens the authorization URL. It is a variable so tests can
+// complete the authorization without a browser.
+var openBrowser = func(u string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":

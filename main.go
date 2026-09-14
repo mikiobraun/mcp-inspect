@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -71,7 +72,7 @@ func sessionRunE(flags *target, f sessionFunc) func(*cobra.Command, []string) er
 		if err != nil {
 			return err
 		}
-		return withSession(t, authPath, f)
+		return withSession(cmd.OutOrStdout(), t, authPath, f)
 	}
 }
 
@@ -80,7 +81,7 @@ func toolsCmd(flags *target) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tools " + targetUsage,
 		Short: "List tools with their descriptions",
-		RunE: sessionRunE(flags, func(ctx context.Context, session *mcp.ClientSession, _ *rawResults) error {
+		RunE: sessionRunE(flags, func(ctx context.Context, w io.Writer, session *mcp.ClientSession, _ *rawResults) error {
 			var tools []*mcp.Tool
 			for tool, err := range session.Tools(ctx, nil) {
 				if err != nil {
@@ -89,25 +90,25 @@ func toolsCmd(flags *target) *cobra.Command {
 				tools = append(tools, tool)
 			}
 			if asJSON {
-				return printJSON(tools)
+				return printJSON(w, tools)
 			}
-			printServerHeader(session.InitializeResult())
-			fmt.Printf("%d tools\n", len(tools))
+			printServerHeader(w, session.InitializeResult())
+			fmt.Fprintf(w, "%d tools\n", len(tools))
 			for _, tool := range tools {
-				fmt.Println()
+				fmt.Fprintln(w)
 				name := tool.Name
 				if tool.Title != "" && tool.Title != tool.Name {
 					name += " (" + tool.Title + ")"
 				}
-				fmt.Println(name)
-				printIndented(tool.Description, "  ")
+				fmt.Fprintln(w, name)
+				printIndented(w, tool.Description, "  ")
 				if schema {
 					data, err := json.MarshalIndent(tool.InputSchema, "", "  ")
 					if err != nil {
 						return err
 					}
-					fmt.Println("  input schema:")
-					printIndented(string(data), "    ")
+					fmt.Fprintln(w, "  input schema:")
+					printIndented(w, string(data), "    ")
 				}
 			}
 			return nil
@@ -123,14 +124,14 @@ func infoCmd(flags *target) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "info " + targetUsage,
 		Short: "Show server info, capabilities and instructions",
-		RunE: sessionRunE(flags, func(ctx context.Context, session *mcp.ClientSession, _ *rawResults) error {
+		RunE: sessionRunE(flags, func(ctx context.Context, w io.Writer, session *mcp.ClientSession, _ *rawResults) error {
 			res := session.InitializeResult()
 			if asJSON {
-				return printJSON(res)
+				return printJSON(w, res)
 			}
-			printServerHeader(res)
-			fmt.Printf("protocol:     %s\n", res.ProtocolVersion)
-			fmt.Printf("capabilities: %s\n", describeCapabilities(res.Capabilities))
+			printServerHeader(w, res)
+			fmt.Fprintf(w, "protocol:     %s\n", res.ProtocolVersion)
+			fmt.Fprintf(w, "capabilities: %s\n", describeCapabilities(res.Capabilities))
 			return nil
 		}),
 	}
@@ -138,9 +139,10 @@ func infoCmd(flags *target) *cobra.Command {
 	return cmd
 }
 
-type sessionFunc func(ctx context.Context, session *mcp.ClientSession, raw *rawResults) error
+// sessionFunc runs a command against a connected session, writing output to w.
+type sessionFunc func(ctx context.Context, w io.Writer, session *mcp.ClientSession, raw *rawResults) error
 
-func withSession(t *target, authPath string, f sessionFunc) error {
+func withSession(w io.Writer, t *target, authPath string, f sessionFunc) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	raw := newRawResults()
@@ -149,27 +151,27 @@ func withSession(t *target, authPath string, f sessionFunc) error {
 		return err
 	}
 	defer session.Close()
-	return f(ctx, session, raw)
+	return f(ctx, w, session, raw)
 }
 
-func printServerHeader(res *mcp.InitializeResult) {
+func printServerHeader(w io.Writer, res *mcp.InitializeResult) {
 	info := res.ServerInfo
 	title := info.Name
 	if info.Title != "" {
 		title = info.Title + " [" + info.Name + "]"
 	}
-	fmt.Println(strings.TrimSpace(title + " " + info.Version))
+	fmt.Fprintln(w, strings.TrimSpace(title+" "+info.Version))
 	if info.WebsiteURL != "" {
-		fmt.Println(info.WebsiteURL)
+		fmt.Fprintln(w, info.WebsiteURL)
 	}
 	if info.Description != "" {
-		printIndented(info.Description, "  ")
+		printIndented(w, info.Description, "  ")
 	}
 	if res.Instructions != "" {
-		fmt.Println("\ninstructions:")
-		printIndented(res.Instructions, "  ")
+		fmt.Fprintln(w, "\ninstructions:")
+		printIndented(w, res.Instructions, "  ")
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 }
 
 func describeCapabilities(c *mcp.ServerCapabilities) string {
@@ -216,18 +218,18 @@ func describeCapabilities(c *mcp.ServerCapabilities) string {
 	return strings.Join(parts, ", ")
 }
 
-func printIndented(s, indent string) {
+func printIndented(w io.Writer, s, indent string) {
 	s = strings.TrimRight(s, "\n")
 	if s == "" {
 		return
 	}
 	for line := range strings.SplitSeq(s, "\n") {
-		fmt.Println(strings.TrimRight(indent+line, " "))
+		fmt.Fprintln(w, strings.TrimRight(indent+line, " "))
 	}
 }
 
-func printJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
+func printJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }

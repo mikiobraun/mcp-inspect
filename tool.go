@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -29,7 +30,7 @@ func toolCmd(flags *target) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return withSession(t, authPath, func(ctx context.Context, session *mcp.ClientSession, raw *rawResults) error {
+			return withSession(cmd.OutOrStdout(), t, authPath, func(ctx context.Context, w io.Writer, session *mcp.ClientSession, raw *rawResults) error {
 				// Page through the tool list; the raw pages are recorded by the transport.
 				for _, err := range session.Tools(ctx, nil) {
 					if err != nil {
@@ -45,14 +46,14 @@ func toolCmd(flags *target) *cobra.Command {
 					if err := json.Indent(&buf, data, "", "  "); err != nil {
 						return err
 					}
-					fmt.Println(buf.String())
+					fmt.Fprintln(w, buf.String())
 					return nil
 				}
 				var def toolDef
 				if err := json.Unmarshal(data, &def); err != nil {
 					return fmt.Errorf("parsing tool %q: %w", name, err)
 				}
-				printTool(&def)
+				printTool(w, &def)
 				return nil
 			})
 		},
@@ -234,76 +235,76 @@ func (s *schema) UnmarshalJSON(data []byte) error {
 
 const wrapWidth = 80
 
-func printTool(t *toolDef) {
+func printTool(w io.Writer, t *toolDef) {
 	name := t.Name
 	if t.Title != "" && t.Title != t.Name {
 		name += " (" + t.Title + ")"
 	}
-	fmt.Println(name)
-	printWrapped(t.Description, 2)
+	fmt.Fprintln(w, name)
+	printWrapped(w, t.Description, 2)
 
 	if len(t.Annotations) > 0 {
 		var parts []string
 		for _, a := range t.Annotations {
 			parts = append(parts, a.Key+": "+compactJSON(a.Value))
 		}
-		fmt.Println()
-		fmt.Println("annotations:")
-		printWrapped(strings.Join(parts, ", "), 2)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "annotations:")
+		printWrapped(w, strings.Join(parts, ", "), 2)
 	}
 
-	fmt.Println()
-	fmt.Println("parameters:")
-	printSchemaBody(t.InputSchema, 2)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "parameters:")
+	printSchemaBody(w, t.InputSchema, 2)
 	if t.InputSchema != nil && len(t.InputSchema.Defs) > 0 {
-		fmt.Println()
-		fmt.Println("parameter definitions:")
-		printDefs(t.InputSchema.Defs, 2)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "parameter definitions:")
+		printDefs(w, t.InputSchema.Defs, 2)
 	}
 
 	if t.OutputSchema != nil {
-		fmt.Println()
-		fmt.Println("returns:")
-		printSchemaBody(t.OutputSchema, 2)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "returns:")
+		printSchemaBody(w, t.OutputSchema, 2)
 		if len(t.OutputSchema.Defs) > 0 {
-			fmt.Println()
-			fmt.Println("result definitions:")
-			printDefs(t.OutputSchema.Defs, 2)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "result definitions:")
+			printDefs(w, t.OutputSchema.Defs, 2)
 		}
 	}
 }
 
 // printSchemaBody prints the properties of an object schema, or the schema
 // itself if it isn't a plain object.
-func printSchemaBody(s *schema, indent int) {
+func printSchemaBody(w io.Writer, s *schema, indent int) {
 	pad := strings.Repeat(" ", indent)
 	switch {
 	case s == nil:
-		fmt.Println(pad + "none")
+		fmt.Fprintln(w, pad+"none")
 	case len(s.Properties) > 0:
-		printProperties(s, indent)
+		printProperties(w, s, indent)
 	case s.Unparsed != nil:
-		fmt.Println(pad + compactJSON(s.Unparsed))
+		fmt.Fprintln(w, pad+compactJSON(s.Unparsed))
 	case s.Ref != "" || len(s.Combinators) > 0 || (len(s.Types) > 0 && !slices.Equal(s.Types, []string{"object"})):
-		fmt.Println(pad + typeSummary(s, false))
-		printSchemaDetails(s, indent+4)
+		fmt.Fprintln(w, pad+typeSummary(s, false))
+		printSchemaDetails(w, s, indent+4)
 	default:
-		fmt.Println(pad + "none")
+		fmt.Fprintln(w, pad+"none")
 	}
 }
 
-func printDefs(defs orderedSchemas, indent int) {
+func printDefs(w io.Writer, defs orderedSchemas, indent int) {
 	for i, d := range defs {
 		if i > 0 {
-			fmt.Println()
+			fmt.Fprintln(w)
 		}
-		fmt.Println(strings.Repeat(" ", indent) + d.Name + "  " + typeSummary(d.Schema, false))
-		printSchemaDetails(d.Schema, indent+4)
-		printChildren(d.Schema, indent+2)
+		fmt.Fprintln(w, strings.Repeat(" ", indent)+d.Name+"  "+typeSummary(d.Schema, false))
+		printSchemaDetails(w, d.Schema, indent+4)
+		printChildren(w, d.Schema, indent+2)
 	}
 }
 
-func printProperties(s *schema, indent int) {
+func printProperties(w io.Writer, s *schema, indent int) {
 	width := 0
 	for _, p := range s.Properties {
 		width = max(width, len(p.Name))
@@ -311,24 +312,24 @@ func printProperties(s *schema, indent int) {
 	pad := strings.Repeat(" ", indent)
 	for _, p := range s.Properties {
 		required := slices.Contains(s.Required, p.Name)
-		fmt.Printf("%s%-*s  %s\n", pad, width, p.Name, typeSummary(p.Schema, required))
-		printSchemaDetails(p.Schema, indent+4)
-		printChildren(p.Schema, indent+2)
+		fmt.Fprintf(w, "%s%-*s  %s\n", pad, width, p.Name, typeSummary(p.Schema, required))
+		printSchemaDetails(w, p.Schema, indent+4)
+		printChildren(w, p.Schema, indent+2)
 	}
 }
 
 // printChildren prints nested properties of an object, or of an array's items.
-func printChildren(s *schema, indent int) {
+func printChildren(w io.Writer, s *schema, indent int) {
 	switch {
 	case len(s.Properties) > 0:
-		printProperties(s, indent)
+		printProperties(w, s, indent)
 	case s.Items != nil && len(s.Items.Properties) > 0:
-		printProperties(s.Items, indent)
+		printProperties(w, s.Items, indent)
 	}
 }
 
-func printSchemaDetails(s *schema, indent int) {
-	printWrapped(s.Description, indent)
+func printSchemaDetails(w io.Writer, s *schema, indent int) {
+	printWrapped(w, s.Description, indent)
 
 	var parts []string
 	if s.Default != nil {
@@ -351,7 +352,7 @@ func printSchemaDetails(s *schema, indent int) {
 			parts = append(parts, "items "+d.Key+": "+compactJSON(d.Value))
 		}
 	}
-	printWrapped(strings.Join(parts, ", "), indent)
+	printWrapped(w, strings.Join(parts, ", "), indent)
 
 	combinators := s.Combinators
 	if s.Items != nil {
@@ -369,7 +370,7 @@ func printSchemaDetails(s *schema, indent int) {
 				text = buf.String()
 			}
 		}
-		fmt.Printf("%s%s: %s\n", pad, c.Key, text)
+		fmt.Fprintf(w, "%s%s: %s\n", pad, c.Key, text)
 	}
 }
 
@@ -431,7 +432,7 @@ func joinJSON(values []json.RawMessage) string {
 
 // printWrapped prints text word-wrapped at wrapWidth, indented. Line breaks in
 // the text start new lines.
-func printWrapped(text string, indent int) {
+func printWrapped(w io.Writer, text string, indent int) {
 	if strings.TrimSpace(text) == "" {
 		return
 	}
@@ -439,18 +440,18 @@ func printWrapped(text string, indent int) {
 	for para := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
 		words := strings.Fields(para)
 		if len(words) == 0 {
-			fmt.Println()
+			fmt.Fprintln(w)
 			continue
 		}
 		line := pad + words[0]
-		for _, w := range words[1:] {
-			if len(line)+1+len(w) > wrapWidth {
-				fmt.Println(line)
-				line = pad + w
+		for _, word := range words[1:] {
+			if len(line)+1+len(word) > wrapWidth {
+				fmt.Fprintln(w, line)
+				line = pad + word
 				continue
 			}
-			line += " " + w
+			line += " " + word
 		}
-		fmt.Println(line)
+		fmt.Fprintln(w, line)
 	}
 }
