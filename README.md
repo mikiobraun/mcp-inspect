@@ -137,3 +137,7 @@ Server definitions are plain JSON and can be edited by hand.
 
 Secrets in logs are replaced by `<redacted sha256:…, N chars>`, so you can tell
 whether a token changed without seeing it.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
