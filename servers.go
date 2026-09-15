@@ -35,6 +35,9 @@ type target struct {
 	ClientSecret string   `json:"client_secret,omitempty"`
 	Scopes       []string `json:"scopes,omitempty"`
 	RedirectPort int      `json:"redirect_port,omitempty"`
+	// UpgradeRedirects follows same-host https-to-http redirects during OAuth
+	// as https, for servers behind a proxy that build redirects with http.
+	UpgradeRedirects bool `json:"upgrade_redirects,omitempty"`
 }
 
 func (t *target) redirectPort() int {
@@ -56,7 +59,7 @@ func (t *target) describe() string {
 
 // connectionFlags are the flags that describe a target. They apply to ad-hoc
 // URL targets and to add, not to saved servers.
-var connectionFlags = []string{"sse", "header", "bearer", "bearer-cmd", "client-id", "client-secret", "scope", "redirect-port"}
+var connectionFlags = []string{"sse", "header", "bearer", "bearer-cmd", "client-id", "client-secret", "scope", "redirect-port", "upgrade-redirects"}
 
 func bindConnectionFlags(cmd *cobra.Command, t *target) {
 	pf := cmd.PersistentFlags()
@@ -68,6 +71,7 @@ func bindConnectionFlags(cmd *cobra.Command, t *target) {
 	pf.StringVar(&t.ClientSecret, "client-secret", "", "OAuth client secret")
 	pf.StringSliceVar(&t.Scopes, "scope", nil, "OAuth scopes to request instead of the discovered ones (repeatable or comma-separated)")
 	pf.IntVar(&t.RedirectPort, "redirect-port", defaultRedirectPort, "local port for the OAuth callback")
+	pf.BoolVar(&t.UpgradeRedirects, "upgrade-redirects", false, "during OAuth, follow a same-host redirect from https to http as https")
 }
 
 func changedConnectionFlags(cmd *cobra.Command) []string {

@@ -169,7 +169,7 @@ func newOAuthHandler(t *target, path string, httpClient *http.Client) (auth.OAut
 	if err != nil {
 		return nil, err
 	}
-	return &resourceMatchingHandler{OAuthHandler: handler, client: httpClient}, nil
+	return &resourceMatchingHandler{OAuthHandler: handler, client: httpClient, upgradeRedirects: t.UpgradeRedirects}, nil
 }
 
 // resourceMatchingHandler tolerates a trailing-slash difference between the
@@ -178,7 +178,8 @@ func newOAuthHandler(t *target, path string, httpClient *http.Client) (auth.OAut
 // Only the metadata URL from the 401's WWW-Authenticate header is checked.
 type resourceMatchingHandler struct {
 	auth.OAuthHandler
-	client *http.Client
+	client           *http.Client
+	upgradeRedirects bool
 }
 
 func (h *resourceMatchingHandler) Authorize(ctx context.Context, req *http.Request, resp *http.Response) error {
@@ -196,7 +197,12 @@ func (h *resourceMatchingHandler) Authorize(ctx context.Context, req *http.Reque
 		req = req.Clone(ctx)
 		req.URL = u
 	}
-	return h.OAuthHandler.Authorize(ctx, req, resp)
+	err = h.OAuthHandler.Authorize(ctx, req, resp)
+	// The SDK's error for an https-to-http redirect during discovery.
+	if err != nil && !h.upgradeRedirects && strings.Contains(err.Error(), "is a security downgrade") {
+		return fmt.Errorf("%w (if the server builds https redirects as http by mistake, --upgrade-redirects follows them over https)", err)
+	}
+	return err
 }
 
 // challengedResource returns the "resource" from the metadata named in the
@@ -222,11 +228,13 @@ func (h *resourceMatchingHandler) challengedResource(ctx context.Context, resp *
 	}
 	defer metaResp.Body.Close()
 	var prm struct {
-		Resource string `json:"resource"`
+		Resource             string   `json:"resource"`
+		AuthorizationServers []string `json:"authorization_servers"`
 	}
 	if err := json.NewDecoder(metaResp.Body).Decode(&prm); err != nil {
 		return "", fmt.Errorf("reading %s: %w", metadataURL, err)
 	}
+	logf(vLifecycle, "auth: protected resource metadata %s: resource %q, authorization servers %q", metadataURL, prm.Resource, prm.AuthorizationServers)
 	return prm.Resource, nil
 }
 

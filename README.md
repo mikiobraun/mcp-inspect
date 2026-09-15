@@ -88,6 +88,7 @@ server:
 | `--client-id`, `--client-secret` | pre-registered OAuth client instead of dynamic registration |
 | `--scope` | OAuth scopes to request instead of the discovered ones |
 | `--redirect-port` | local port for the OAuth callback (default 33418) |
+| `--upgrade-redirects` | during OAuth, follow a same-host redirect from `https://` to `http://` as `https://` |
 | `--sse` | legacy SSE transport |
 
 Without a bearer token or an `Authorization` header, a 401 from the server
@@ -105,6 +106,13 @@ ssh -L 33418:127.0.0.1:33418 headless-host
 
 A trailing-slash difference between the server URL and the `resource` in its
 metadata is tolerated.
+
+Discovery refuses redirects from `https://` to `http://`. Servers behind a
+TLS-terminating proxy sometimes send those by mistake, e.g. a framework that
+strips a trailing slash from `/.well-known/oauth-authorization-server/` and
+builds the redirect with the scheme it sees. `--upgrade-redirects` follows such
+a redirect over `https://` if it stays on the same host; fixing the server
+(trusting the proxy's `X-Forwarded-Proto`) is better.
 
 ## Files
 

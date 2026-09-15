@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -104,6 +105,34 @@ func (t *authRoundTripper) send(orig *http.Request, body []byte) (*http.Response
 		}
 	}
 	return t.next.RoundTrip(req)
+}
+
+// redirectUpgradingRoundTripper rewrites a redirect from an https request to
+// http on the same host into an https redirect. Servers behind a TLS-terminating
+// proxy often build redirects with http; the SDK rightly refuses to follow
+// those. Rewriting the Location header keeps the SDK's redirect checks in place.
+type redirectUpgradingRoundTripper struct {
+	next http.RoundTripper
+}
+
+func (t *redirectUpgradingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(req)
+	if err != nil || req.URL.Scheme != "https" || resp.StatusCode < 300 || resp.StatusCode > 399 {
+		return resp, err
+	}
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil || loc.Scheme != "http" || loc.Hostname() != req.URL.Hostname() {
+		return resp, nil
+	}
+	if port := loc.Port(); port != "" && port != "80" && port != req.URL.Port() {
+		return resp, nil
+	}
+	upgraded := *loc
+	upgraded.Scheme = "https"
+	upgraded.Host = req.URL.Host
+	logf(vLifecycle, "auth: %s %s redirects to %s, following %s instead (--upgrade-redirects)", req.Method, req.URL, loc, &upgraded)
+	resp.Header.Set("Location", upgraded.String())
+	return resp, nil
 }
 
 // staticBearer uses a fixed token. A 401/403 is a hard error.

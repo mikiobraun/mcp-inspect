@@ -93,8 +93,12 @@ func httpTransport(t *target, authPath string) (mcp.Transport, error) {
 		logf(vLifecycle, "auth: Authorization header configured, OAuth disabled")
 	default:
 		logf(vLifecycle, "auth: OAuth on demand (when the server answers 401), cache %s", authPath)
+		var oauthTransport http.RoundTripper = logged
+		if t.UpgradeRedirects {
+			oauthTransport = &redirectUpgradingRoundTripper{next: logged}
+		}
 		var err error
-		handler, err = newOAuthHandler(t, authPath, &http.Client{Transport: logged})
+		handler, err = newOAuthHandler(t, authPath, &http.Client{Transport: oauthTransport})
 		if err != nil {
 			return nil, err
 		}

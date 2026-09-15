@@ -69,6 +69,12 @@ Single package `main`, one file per concern:
 - **Trailing-slash tolerance**: the SDK compares the metadata `resource` with the
   endpoint as strings and silently ignores mismatches. `resourceMatchingHandler`
   reads the metadata URL from `WWW-Authenticate` and adjusts only for a trailing slash.
+- **Redirect upgrade** (`--upgrade-redirects`, opt-in): the SDK's discovery
+  client refuses https-to-http redirects. `redirectUpgradingRoundTripper` rewrites
+  a same-host `Location` to https in the OAuth client's transport, so the SDK's
+  own redirect checks (limit, loopback and private-address guards) still apply.
+  Because of the loopback guard, tests can only show the upgraded redirect
+  reaching that check, not a full flow.
 - **Raw results**: the SDK decodes results into Go maps, losing key order.
   `loggingConn` records raw JSON-RPC results per method; `tool` parses them with
   an order-preserving decoder, `call` prints them verbatim.

@@ -26,12 +26,30 @@ type oauthSetup struct {
 }
 
 func newOAuthSetup(t *testing.T, configure func(*testservers.AuthServer)) *oauthSetup {
+	return newOAuthSetupWith(t, configure, false)
+}
+
+// newTLSOAuthSetup serves over https; the test certificate is trusted by
+// replacing http.DefaultTransport for the duration of the test.
+func newTLSOAuthSetup(t *testing.T, configure func(*testservers.AuthServer)) *oauthSetup {
+	return newOAuthSetupWith(t, configure, true)
+}
+
+func newOAuthSetupWith(t *testing.T, configure func(*testservers.AuthServer), useTLS bool) *oauthSetup {
 	isolateConfig(t)
 	s := testservers.NewAuthServer()
 	if configure != nil {
 		configure(s)
 	}
-	srv := httptest.NewServer(s.Handler())
+	var srv *httptest.Server
+	if useTLS {
+		srv = httptest.NewTLSServer(s.Handler())
+		original := http.DefaultTransport
+		http.DefaultTransport = srv.Client().Transport
+		t.Cleanup(func() { http.DefaultTransport = original })
+	} else {
+		srv = httptest.NewServer(s.Handler())
+	}
 	t.Cleanup(srv.Close)
 
 	original := openBrowser
@@ -168,6 +186,65 @@ func TestOAuthToleratesTrailingSlashResource(t *testing.T) {
 	requireSuccess(t, res)
 	requireEvents(t, events, "no-token", "register", "authorize", "token:authorization_code")
 }
+
+func TestOAuthRedirectToHTTP(t *testing.T) {
+	slashRedirect := func(s *testservers.AuthServer) { s.IssuerSlashRedirect = true }
+
+	t.Run("refused by default", func(t *testing.T) {
+		o := newTLSOAuthSetup(t, slashRedirect)
+		events, res := o.tools(t)
+		if res.err == nil || !strings.Contains(res.err.Error(), "security downgrade") || !strings.Contains(res.err.Error(), "--upgrade-redirects") {
+			t.Fatalf("want downgrade error with a hint, got %v", res.err)
+		}
+		// The second "no-token" is the SDK's fallback initialize, which is not
+		// authorized again.
+		requireEvents(t, events, "no-token", "slash-redirect", "no-token")
+	})
+
+	// A full flow isn't possible here: after the upgrade, the SDK refuses to
+	// follow any redirect into a loopback address, and the test server is on
+	// 127.0.0.1. Reaching that check shows the redirect passed as https.
+	t.Run("upgraded with --upgrade-redirects", func(t *testing.T) {
+		o := newTLSOAuthSetup(t, slashRedirect)
+		_, res := o.tools(t, "--upgrade-redirects")
+		if res.err == nil || strings.Contains(res.err.Error(), "security downgrade") || !strings.Contains(res.err.Error(), `redirect into loopback address "127.0.0.1"`) {
+			t.Fatalf("want the https redirect to reach the loopback check, got %v", res.err)
+		}
+		if !strings.Contains(res.err.Error(), "https://127.0.0.1:") {
+			t.Errorf("error should name the upgraded https URL: %v", res.err)
+		}
+	})
+}
+
+func TestRedirectUpgradingRoundTripper(t *testing.T) {
+	for _, tc := range []struct {
+		request, location, want string
+	}{
+		{"https://a.example/x/", "http://a.example/x", "https://a.example/x"},
+		{"https://a.example:8443/x/", "http://a.example:8443/x", "https://a.example:8443/x"},
+		{"https://a.example:8443/x/", "http://a.example/x", "https://a.example:8443/x"},
+		{"https://a.example/x/", "http://b.example/x", "http://b.example/x"},           // other host: unchanged
+		{"https://a.example/x/", "http://a.example:9000/x", "http://a.example:9000/x"}, // other port: unchanged
+		{"https://a.example/x/", "/x", "/x"},                                           // relative: unchanged
+		{"http://a.example/x/", "http://a.example/x", "http://a.example/x"},            // not from https: unchanged
+	} {
+		rt := &redirectUpgradingRoundTripper{next: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusTemporaryRedirect, Header: http.Header{"Location": {tc.location}}}, nil
+		})}
+		req, _ := http.NewRequest(http.MethodGet, tc.request, nil)
+		resp, err := rt.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := resp.Header.Get("Location"); got != tc.want {
+			t.Errorf("request %s, Location %s: got %s, want %s", tc.request, tc.location, got, tc.want)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestOAuthFailedAuthorizationIsNotRetried(t *testing.T) {
 	o := newOAuthSetup(t, func(s *testservers.AuthServer) { s.DenyAuthorization = true })

@@ -37,6 +37,11 @@ type AuthServer struct {
 	// DenyAuthorization makes /as/authorize redirect back with access_denied.
 	// Set before serving.
 	DenyAuthorization bool
+	// IssuerSlashRedirect advertises the issuer as <base>/as/ and answers its
+	// metadata URL (which then ends in "/") with a 307 to the URL without the
+	// slash, built with http:// — like a framework behind a TLS-terminating
+	// proxy. Only meaningful over TLS. Set before serving.
+	IssuerSlashRedirect bool
 	// TokenLifetime of issued access tokens; defaults to one hour.
 	TokenLifetime time.Duration
 	// Logf, if set, receives a line per event.
@@ -55,8 +60,8 @@ func NewAuthServer() *AuthServer {
 
 // Events returns what happened so far, in order: "no-token" (MCP request
 // without a token), "access-rejected" (MCP request with an invalid token),
-// "register", "authorize", "token:authorization_code", "token:refresh_token",
-// "refresh-rejected".
+// "slash-redirect", "register", "authorize", "token:authorization_code",
+// "token:refresh_token", "refresh-rejected".
 func (s *AuthServer) Events() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,22 +119,37 @@ func (s *AuthServer) Handler() http.Handler {
 	mcpHandler := NewStreamableHandler(NewSchemaServer())
 	mux := http.NewServeMux()
 
+	issuer := func(r *http.Request) string {
+		if s.IssuerSlashRedirect {
+			return baseURL(r) + "/as/"
+		}
+		return baseURL(r) + "/as"
+	}
+
 	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, r *http.Request) {
-		base := baseURL(r)
 		auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
-			Resource:             base + "/mcp" + s.ResourceSuffix,
-			AuthorizationServers: []string{base + "/as"},
+			Resource:             baseURL(r) + "/mcp" + s.ResourceSuffix,
+			AuthorizationServers: []string{issuer(r)},
 			ScopesSupported:      []string{"read"},
 		}).ServeHTTP(w, r)
 	})
 
+	mux.HandleFunc("/.well-known/oauth-authorization-server/as/", func(w http.ResponseWriter, r *http.Request) {
+		if !s.IssuerSlashRedirect || r.URL.Path != "/.well-known/oauth-authorization-server/as/" {
+			http.NotFound(w, r)
+			return
+		}
+		s.event("slash-redirect", r.URL.Path)
+		http.Redirect(w, r, "http://"+r.Host+"/.well-known/oauth-authorization-server/as", http.StatusTemporaryRedirect)
+	})
+
 	mux.HandleFunc("/.well-known/oauth-authorization-server/as", func(w http.ResponseWriter, r *http.Request) {
-		issuer := baseURL(r) + "/as"
+		as := baseURL(r) + "/as"
 		writeJSON(w, http.StatusOK, map[string]any{
-			"issuer":                                issuer,
-			"authorization_endpoint":                issuer + "/authorize",
-			"token_endpoint":                        issuer + "/token",
-			"registration_endpoint":                 issuer + "/register",
+			"issuer":                                issuer(r),
+			"authorization_endpoint":                as + "/authorize",
+			"token_endpoint":                        as + "/token",
+			"registration_endpoint":                 as + "/register",
 			"response_types_supported":              []string{"code"},
 			"code_challenge_methods_supported":      []string{"S256"},
 			"scopes_supported":                      []string{"read", "offline_access"},
@@ -227,6 +247,9 @@ func (s *AuthServer) Handler() http.Handler {
 }
 
 func baseURL(r *http.Request) string {
+	if r.TLS != nil {
+		return "https://" + r.Host
+	}
 	return "http://" + r.Host
 }
 
