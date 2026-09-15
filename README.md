@@ -140,4 +140,4 @@ whether a token changed without seeing it.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+BSD 3-Clause, see [LICENSE](LICENSE).
